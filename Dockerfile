@@ -27,6 +27,11 @@ RUN sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf
 
 RUN mv $PHP_INI_DIR/php.ini-$PHP_ENV $PHP_INI_DIR/php.ini
 
+# Compositing a full deck (~40-60 card images in memory) exceeds PHP's default
+# 128M memory_limit. Bump it — the Render free container has 512M, so 256M is safe
+# headroom for a single request.
+RUN echo "memory_limit = 256M" > "$PHP_INI_DIR/conf.d/zzz-swissygo.ini"
+
 ENV COMPOSER_ALLOW_SUPERUSER 1
 
 
