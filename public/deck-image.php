@@ -68,6 +68,7 @@ curl_setopt_array($ch, [
     CURLOPT_TIMEOUT        => 60,
     CURLOPT_HTTPHEADER     => [
         'Authorization: Bearer ' . $supabase_key,
+        'apikey: ' . $supabase_key,
         'Content-Type: image/png',
         'x-upsert: true',
         'Cache-Control: max-age=31536000, immutable',
