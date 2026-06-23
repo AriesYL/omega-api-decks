@@ -37,7 +37,7 @@ if ($deck_input === null)
     Http::fail('no deck provided (use ?list=<deck> or a format-specific parameter)');
 
 $hash        = hash('sha256', $deck_input);
-$object_path = rawurlencode($bucket) . '/' . $hash . '.png';   // hash is hex → path-safe
+$object_path = rawurlencode($bucket) . '/' . $hash . '.jpg';   // omega outputs JPEG; hash is hex → path-safe
 $public_url  = "$supabase_url/storage/v1/object/public/$object_path";
 
 // 1) Already stored? → return it (idempotent: no render, no upload).
@@ -69,7 +69,7 @@ curl_setopt_array($ch, [
     CURLOPT_HTTPHEADER     => [
         'Authorization: Bearer ' . $supabase_key,
         'apikey: ' . $supabase_key,
-        'Content-Type: image/png',
+        'Content-Type: ' . ($img_ctype ?: 'image/jpeg'),
         'x-upsert: true',
         'Cache-Control: max-age=31536000, immutable',
     ],
