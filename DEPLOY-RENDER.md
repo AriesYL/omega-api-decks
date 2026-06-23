@@ -41,7 +41,13 @@ GET /deck-image?token=<REQUEST_TOKEN>&list=<deck>     # also: ydke|omega|ydk|nam
 - **Pre-warm:** the free service spins down after ~15 min idle; the SwissYGO "Mis Decks" UI should ping `/` (or `/detect`) when opened so the container wakes before the user submits.
 
 ## Notes on the card database
-`DATABASE_URL` points at MyCard's `en-US/cards.cdb` (raw GitHub). It's actively maintained
-and a single ~7.9MB file, re-downloaded on each cold start. If a very new card fails to
-render (DB lag), bump to a newer source or self-host the `cards.cdb`. Dueling Book is not a
-source (closed format, no `cdb`).
+`DATABASE_URL` points at MyCard's `en-US/cards.cdb` (raw GitHub), a single ~7.9MB file
+re-downloaded on each cold start.
+
+**DB recency does NOT gate image rendering for ydke/omega decks** (what the SwissYGO host
+sends). Verified in code: `YdkeFormatDecoder` extracts passcodes straight from the deck
+string (`base64` → `unpack("V*")`, no DB), and `ImageCache` fetches each image by passcode
+via `CARD_IMAGE_URL` (YGOProDeck) — it never queries the `.cdb`. So a brand-new card still
+renders even if the `.cdb` lags, because its passcode comes from the deck string. The `.cdb`
+only matters for **name-based** input + `/parse` `/detect` `/convert`. Dueling Book is not a
+source (closed format, no `.cdb`).
