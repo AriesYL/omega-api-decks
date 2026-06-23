@@ -109,16 +109,25 @@ function create_decode_tester(string ...$format_names): FormatDecodeTester
 
 function get_image_urls(ImageKey $key): array
 {
-    $lookup_json_path = Config::get('image_urls')['lookup_json_path'];
-    $contents = file_get_contents($lookup_json_path);
-    $lookup_table = json_decode($contents, true);
+    $name = (string) $key->value();
 
-    $name = $key->value();
-    if (!array_key_exists("$name", $lookup_table)) {
-        return null;
+    // Prefer the prebuilt lookup (handles alias/alt-art passcodes), if present.
+    $lookup_json_path = Config::get('image_urls')['lookup_json_path'];
+    if (is_file($lookup_json_path)) {
+        $lookup_table = json_decode((string) file_get_contents($lookup_json_path), true);
+        if (is_array($lookup_table) && array_key_exists($name, $lookup_table))
+            return $lookup_table[$name];
     }
 
-    return $lookup_table["$name"];
+    // Fallback: build the URL straight from CARD_IMAGE_URL. Works for ANY passcode —
+    // even one newer than the local DB / missing from the lookup — so one unknown
+    // card no longer fatals the whole render (the function must never return null).
+    $prefix = getenv('CARD_IMAGE_URL');
+    $ext    = getenv('CARD_IMAGE_URL_EXT');
+    if ($prefix !== false && $ext !== false)
+        return [rtrim($prefix, '/') . "/$name." . ltrim($ext, '.')];
+
+    return [];
 }
 
 function image_loader(ImageKey $key, int $type, bool $allow_placeholder = true): ?Image

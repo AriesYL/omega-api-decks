@@ -15,12 +15,13 @@ PORT="${PORT:-80}"
 sed -ri "s/^Listen 80\$/Listen ${PORT}/" /etc/apache2/ports.conf || true
 sed -ri "s/<VirtualHost \*:80>/<VirtualHost *:${PORT}>/" /etc/apache2/sites-available/*.conf || true
 
-# Free hosts have ephemeral disks, so the card database is gone on each cold start.
-# Download it on boot if missing (DATABASE_URL). Only the DB (--database); the image
-# cache is filled on-demand per request (we never run populate-cache → no huge disk).
-if [ ! -f "${DATA_DIR}/card.db" ]; then
-    echo "[entrypoint] card.db missing → downloading from DATABASE_URL ..."
-    update-database --database || echo "[entrypoint] WARN: update-database failed (check DATABASE_URL)"
+# Free hosts have ephemeral disks → the card DB + image-url lookup are gone on each
+# cold start. Build both on boot if missing (no args = download DB from DATABASE_URL
+# AND build imgurls.json from CARD_IMAGE_URL). The card IMAGES themselves are still
+# fetched on demand per request (we never run populate-cache → no huge disk).
+if [ ! -f "${DATA_DIR}/imgurls.json" ]; then
+    echo "[entrypoint] building card DB + image-url lookup ..."
+    update-database || echo "[entrypoint] WARN: update-database failed (check DATABASE_URL / CARD_IMAGE_URL)"
 fi
 
 docker-php-entrypoint apache2-foreground
