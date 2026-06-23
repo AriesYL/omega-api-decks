@@ -20,7 +20,7 @@ ONLY here; the SwissYGO Raspberry Pi only ever stores the returned URL.
 ## Environment variables (Render → Environment)
 | Var | Value | Notes |
 |---|---|---|
-| `DATABASE_URL` | URL to a YGOPro **`cards.cdb`** | **TBD — must source a reliable public cards.cdb.** Downloaded on boot. |
+| `DATABASE_URL` | `https://raw.githubusercontent.com/mycard/ygopro-database/master/locales/en-US/cards.cdb` | YGOPro **`cards.cdb`** from the actively-maintained MyCard DB (single file, ~7.9MB, updated regularly). Downloaded on boot. |
 | `CARD_IMAGE_URL` | `https://images.ygoprodeck.com/images/cards` | Recommended public card-image source. `{CARD_IMAGE_URL}/{passcode}.{ext}`. (Low volume + on-demand cache; if rate-limited, self-host the images.) |
 | `CARD_IMAGE_URL_EXT` | `jpg` | |
 | `REQUEST_TOKEN` | a long random string | The SwissYGO host (#102) sends `?token=` with it; `/deck-image` and `/imageify` require it. |
@@ -40,5 +40,8 @@ GET /deck-image?token=<REQUEST_TOKEN>&list=<deck>     # also: ydke|omega|ydk|nam
 - **Idempotent:** same deck string ⇒ same key ⇒ if already stored, returned with `cached:true` (no render/upload).
 - **Pre-warm:** the free service spins down after ~15 min idle; the SwissYGO "Mis Decks" UI should ping `/` (or `/detect`) when opened so the container wakes before the user submits.
 
-## Open item
-- **`DATABASE_URL`:** pick/host a reliable public **`cards.cdb`** (YGOPro/EDOPro card database). Everything else is wired.
+## Notes on the card database
+`DATABASE_URL` points at MyCard's `en-US/cards.cdb` (raw GitHub). It's actively maintained
+and a single ~7.9MB file, re-downloaded on each cold start. If a very new card fails to
+render (DB lag), bump to a newer source or self-host the `cards.cdb`. Dueling Book is not a
+source (closed format, no `cdb`).
