@@ -18,6 +18,7 @@ RUN chmod uga+x /usr/local/bin/install-php-extensions && sync
 RUN install-php-extensions \
         opcache \
         gd \
+        curl \
     && a2enmod rewrite
 
 ENV APACHE_DOCUMENT_ROOT /var/www/public
