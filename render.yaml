@@ -20,7 +20,7 @@ services:
       - key: CARD_IMAGE_URL_EXT
         value: jpg
       - key: REQUEST_TOKEN
-        generateValue: true        # Render generates a strong random token (copy it later for the Pi / #102)
+        sync: false                # ← paste the pre-generated token in the dashboard (shared with the Pi / #102; NOT stored in this public repo)
       - key: REQUEST_TOKEN_IN_UI
         value: "false"
       - key: SUPABASE_URL
