@@ -3,17 +3,18 @@
 require(__DIR__ . '/../vendor/autoload.php');
 
 /*
- * Deck image WITH persistent storage (SwissYGO #84 / Part 1).
+ * Deck image + cover, persisted to Supabase Storage (SwissYGO #84 / Part 1).
  *
- * Renders the deck image via the local /imageify endpoint, stores it in Supabase
- * Storage under a deterministic key derived from the deck (sha256), and returns the
- * public URL as JSON. IDEMPOTENT: if the object already exists it returns its URL
- * without re-rendering or re-uploading. The Supabase service key lives ONLY here
- * (this external API), never on the SwissYGO host.
+ *   GET /deck-image?token=<REQUEST_TOKEN>&list=<deck>   (any /imageify deck param:
+ *   list | ydke | omega | ydk | names | json ; optional &quality=)
+ *   → { "success": true, "data": { "url": <deck image>, "cover_url": <art|null>, "cached": <bool> } }
  *
- * GET /deck-image?token=<REQUEST_TOKEN>&list=<deck>   (any /imageify-supported deck
- * param works: list | ydke | omega | ydk | names | json; optional &quality=)
- * → { "success": true, "data": { "url": "<public url>", "cached": <bool> } }
+ * - url:       the YGOPro-style deck image (rendered via /imageify) at deck-images/<sha256(deck)>.jpg
+ * - cover_url: the HIGH-QUALITY cropped ARTWORK (no borders) of the FIRST main-deck card
+ *              at deck-images/covers/<passcode>.jpg, sourced from CARD_ART_URL (ygoprodeck
+ *              cards_cropped). Best-effort: null if unavailable — never fails the deck image.
+ * Both are idempotent by key (existing object → reused, no re-render / re-upload). The
+ * Supabase service key lives ONLY here, never on the SwissYGO host.
  */
 
 Http::allow_method('GET');
@@ -25,9 +26,9 @@ $bucket       = getenv('SUPABASE_BUCKET') ?: 'deck-images';
 if ($supabase_url === '' || $supabase_key === '')
     Http::fail('storage is not configured (set SUPABASE_URL and SUPABASE_SERVICE_KEY)', Http::INTERNAL_SERVER_ERROR);
 
-// Deterministic key from the deck the caller sent. We hash the raw deck string (the
-// SwissYGO host sends a stable representation), so re-submitting the same deck reuses
-// the stored image. Accept any of /imageify's deck parameters.
+$port = getenv('PORT') ?: '80';
+$qs   = $_SERVER['QUERY_STRING'] ?? '';   // token + deck + optional quality — forwarded to the loopbacks
+
 $deck_input = null;
 foreach (['list', 'ydke', 'omega', 'ydk', 'names', 'json'] as $param) {
     $value = Http::get_query_parameter($param, false, null);
@@ -36,52 +37,53 @@ foreach (['list', 'ydke', 'omega', 'ydk', 'names', 'json'] as $param) {
 if ($deck_input === null)
     Http::fail('no deck provided (use ?list=<deck> or a format-specific parameter)');
 
-$hash        = hash('sha256', $deck_input);
-$object_path = rawurlencode($bucket) . '/' . $hash . '.jpg';   // omega outputs JPEG; hash is hex → path-safe
-$public_url  = "$supabase_url/storage/v1/object/public/$object_path";
+// ---- 1) Deck image: deck-images/<sha256(deck)>.jpg ----
+$hash     = hash('sha256', $deck_input);
+$deck_obj = rawurlencode($bucket) . '/' . $hash . '.jpg';
+$deck_url = "$supabase_url/storage/v1/object/public/$deck_obj";
+$cached   = storage_object_exists($deck_url);
+if (!$cached) {
+    list($png, $code, $ctype) = http_get("http://127.0.0.1:$port/imageify?$qs", 120);
+    if ($png === false || $code !== 200 || strpos((string) $ctype, 'image/') !== 0)
+        Http::fail('failed to render deck image' . ($code ? " (imageify returned $code)" : ''), Http::INTERNAL_SERVER_ERROR);
+    if (!supabase_upload($supabase_url, $supabase_key, $deck_obj, $png, $ctype ?: 'image/jpeg'))
+        Http::fail('failed to store deck image', Http::INTERNAL_SERVER_ERROR);
+}
 
-// 1) Already stored? → return it (idempotent: no render, no upload).
-if (storage_object_exists($public_url))
-    deck_image_respond($public_url, true);
+// ---- 2) Cover: cropped art of the FIRST main-deck card → deck-images/covers/<passcode>.jpg ----
+// Best-effort: any failure leaves cover_url null without failing the deck image.
+$cover_url  = null;
+$cover_code = first_main_code("http://127.0.0.1:$port/parse?$qs");
+if ($cover_code !== null) {
+    $cover_obj = rawurlencode($bucket) . '/covers/' . $cover_code . '.jpg';
+    $candidate = "$supabase_url/storage/v1/object/public/$cover_obj";
+    if (storage_object_exists($candidate)) {
+        $cover_url = $candidate;
+    } else {
+        $art_base = rtrim(getenv('CARD_ART_URL') ?: 'https://images.ygoprodeck.com/images/cards_cropped', '/');
+        list($art, $acode, $actype) = http_get("$art_base/$cover_code.jpg", 60);
+        if ($art !== false && $acode === 200 && strpos((string) $actype, 'image/') === 0
+            && supabase_upload($supabase_url, $supabase_key, $cover_obj, $art, $actype)) {
+            $cover_url = $candidate;
+        }
+    }
+}
 
-// 2) Render via the local /imageify (loopback), forwarding the same query
-//    (token + deck + optional quality). Apache listens on $PORT (see entrypoint).
-$port     = getenv('PORT') ?: '80';
-$loop_url = "http://127.0.0.1:$port/imageify?" . ($_SERVER['QUERY_STRING'] ?? '');
-$ch = curl_init($loop_url);
-curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 120]);
-$png       = curl_exec($ch);
-$img_code  = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-$img_ctype = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
-curl_close($ch);
-if ($png === false || $img_code !== 200 || strpos($img_ctype, 'image/') !== 0)
-    Http::fail('failed to render deck image' . ($img_code ? " (imageify returned $img_code)" : ''), Http::INTERNAL_SERVER_ERROR);
+header('Content-Type: application/json');
+echo json_encode(['success' => true, 'data' => ['url' => $deck_url, 'cover_url' => $cover_url, 'cached' => $cached]]);
+exit;
 
-// 3) Upload to Supabase Storage. `x-upsert: true` keeps a concurrent re-create
-//    idempotent (returns 200 instead of 409 if it raced into existence).
-$upload_url = "$supabase_url/storage/v1/object/$object_path";
-$ch = curl_init($upload_url);
-curl_setopt_array($ch, [
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_CUSTOMREQUEST  => 'POST',
-    CURLOPT_POSTFIELDS     => $png,
-    CURLOPT_TIMEOUT        => 60,
-    CURLOPT_HTTPHEADER     => [
-        'Authorization: Bearer ' . $supabase_key,
-        'apikey: ' . $supabase_key,
-        'Content-Type: ' . ($img_ctype ?: 'image/jpeg'),
-        'x-upsert: true',
-        'Cache-Control: max-age=31536000, immutable',
-    ],
-]);
-$up_body = curl_exec($ch);
-$up_code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-curl_close($ch);
-if ($up_code < 200 || $up_code >= 300)
-    Http::fail("failed to store image (supabase returned $up_code): " . substr((string) $up_body, 0, 200), Http::INTERNAL_SERVER_ERROR);
 
-deck_image_respond($public_url, false);
-
+function http_get(string $url, int $timeout): array
+{
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => $timeout, CURLOPT_FOLLOWLOCATION => true]);
+    $body  = curl_exec($ch);
+    $code  = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $ctype = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    curl_close($ch);
+    return [$body, $code, $ctype];
+}
 
 function storage_object_exists(string $url): bool
 {
@@ -93,9 +95,35 @@ function storage_object_exists(string $url): bool
     return $code === 200;
 }
 
-function deck_image_respond(string $url, bool $cached): void
+function supabase_upload(string $base, string $key, string $object_path, string $bytes, string $ctype): bool
 {
-    header('Content-Type: application/json');
-    echo json_encode(['success' => true, 'data' => ['url' => $url, 'cached' => $cached]]);
-    exit;
+    $ch = curl_init("$base/storage/v1/object/$object_path");
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CUSTOMREQUEST  => 'POST',
+        CURLOPT_POSTFIELDS     => $bytes,
+        CURLOPT_TIMEOUT        => 60,
+        CURLOPT_HTTPHEADER     => [
+            'Authorization: Bearer ' . $key,
+            'apikey: ' . $key,
+            'Content-Type: ' . $ctype,
+            'x-upsert: true',
+            'Cache-Control: max-age=31536000, immutable',
+        ],
+    ]);
+    curl_exec($ch);
+    $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+    return $code >= 200 && $code < 300;
+}
+
+// First main-deck passcode via the local /parse (works for any input format).
+function first_main_code(string $parse_url): ?int
+{
+    list($body, $code) = http_get($parse_url, 30);
+    if ($code !== 200 || !$body) return null;
+    $json = json_decode($body, true);
+    $main = $json['data']['decks']['main'] ?? null;
+    if (is_array($main) && count($main) > 0 && is_numeric($main[0])) return (int) $main[0];
+    return null;
 }

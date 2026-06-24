@@ -19,6 +19,8 @@ services:
         value: https://images.ygoprodeck.com/images/cards
       - key: CARD_IMAGE_URL_EXT
         value: jpg
+      - key: CARD_ART_URL              # cropped artwork (no borders) for the deck cover
+        value: https://images.ygoprodeck.com/images/cards_cropped
       - key: REQUEST_TOKEN
         sync: false                # ← paste the pre-generated token in the dashboard (shared with the Pi / #102; NOT stored in this public repo)
       - key: REQUEST_TOKEN_IN_UI
