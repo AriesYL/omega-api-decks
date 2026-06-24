@@ -50,10 +50,15 @@ if (!$cached) {
         Http::fail('failed to store deck image', Http::INTERNAL_SERVER_ERROR);
 }
 
-// ---- 2) Cover: cropped art of the FIRST main-deck card → deck-images/covers/<passcode>.jpg ----
+// ---- 2) Cover: cropped art of a card → deck-images/covers/<passcode>.jpg ----
+// The caller can pick the cover card with ?cover=<passcode> (the UI lets the user
+// choose from the deck's cards); otherwise it defaults to the first main-deck card.
 // Best-effort: any failure leaves cover_url null without failing the deck image.
-$cover_url  = null;
-$cover_code = first_main_code("http://127.0.0.1:$port/parse?$qs");
+$cover_url   = null;
+$cover_param = Http::get_query_parameter('cover', false, null);
+$cover_code  = ($cover_param !== null && is_numeric($cover_param))
+    ? (int) $cover_param
+    : first_main_code("http://127.0.0.1:$port/parse?$qs");
 if ($cover_code !== null) {
     $cover_obj = rawurlencode($bucket) . '/covers/' . $cover_code . '.jpg';
     $candidate = "$supabase_url/storage/v1/object/public/$cover_obj";
