@@ -36,8 +36,17 @@ ONLY here; the SwissYGO Raspberry Pi only ever stores the returned URL.
 GET /deck-image?token=<REQUEST_TOKEN>&list=<deck>     # also: ydke|omega|ydk|names|json ; optional &quality=
 → 200 { "success": true, "data": { "url": "https://<ref>.supabase.co/storage/v1/object/public/deck-images/<sha256>.png", "cached": <bool> } }
 → 4xx/5xx via the standard Http::fail JSON on token/render/storage errors
+
+DELETE /deck-image?token=<REQUEST_TOKEN>&url=<public object url>   # SwissYGO #117 (orphan GC)
+→ 200 { "success": true, "data": { "deleted": <bool> } }
 ```
 - **Idempotent:** same deck string ⇒ same key ⇒ if already stored, returned with `cached:true` (no render/upload).
+- **DELETE** removes one orphaned blob (deck image **or** cover). The SwissYGO host calls it
+  after deleting a saved deck whose `image_url`/`cover_url` is no longer referenced by any
+  remaining `user_decks` row (reference count 0 — images are content-addressed by hash and
+  shared across users, so it never deletes a still-referenced object). `url` must be a public
+  object URL inside this bucket (validated); a missing object still returns `deleted:false` with
+  `success:true`. Best-effort on the caller's side — it never blocks the user's deck deletion.
 - **Pre-warm:** the free service spins down after ~15 min idle; the SwissYGO "Mis Decks" UI should ping `/` (or `/detect`) when opened so the container wakes before the user submits.
 
 ## Notes on the card database
